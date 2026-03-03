@@ -1,0 +1,36 @@
+{
+  "_note": "All prices are tax-inclusive (消費税込). Rates are hardcoded and only change when Japan Post announces a revision.",
+  "letterpack_light": {
+    "price": 430,
+    "constraints": {
+      "max_height_cm": 34,
+      "max_width_cm": 25,
+      "max_thickness_cm": 3,
+      "max_weight_g": 4000
+    }
+  },
+  "yupacket": {
+    "tiers": [
+      {"max_thickness_cm": 1, "price": 250},
+      {"max_thickness_cm": 2, "price": 310},
+      {"max_thickness_cm": 3, "price": 360}
+    ],
+    "constraints": {
+      "max_combined_cm": 60,
+      "max_longest_cm": 34,
+      "max_thickness_cm": 3,
+      "max_weight_g": 1000
+    }
+  },
+  "yumail": {
+    "tiers": [
+      {"max_weight_g": 150,  "price": 190},
+      {"max_weight_g": 250,  "price": 230},
+      {"max_weight_g": 500,  "price": 320},
+      {"max_weight_g": 1000, "price": 380}
+    ],
+    "constraints": {
+      "max_weight_g": 1000
+    }
+  }
+}

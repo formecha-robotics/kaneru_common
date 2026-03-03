@@ -1,0 +1,6 @@
+pyproject.toml
+setup.py
+kaneru_common.egg-info/PKG-INFO
+kaneru_common.egg-info/SOURCES.txt
+kaneru_common.egg-info/dependency_links.txt
+kaneru_common.egg-info/top_level.txt

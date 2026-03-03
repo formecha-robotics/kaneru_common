@@ -1,0 +1,6 @@
+Flask==3.1.2
+Flask_Cors==5.0.0
+mysql_connector_repackaged==0.3.1
+Pillow==7.0.0
+Pillow==12.1.0
+Requests==2.32.5

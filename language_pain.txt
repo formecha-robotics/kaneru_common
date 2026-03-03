@@ -1,0 +1,29 @@
+
+non-sensitive lookup file: vanilla.txt
+
+{
+ en : [
+     {"Welcome to Kaneru": {type : "simple", "simple" : "Welcome to Kaneru"}}, 
+     {"You have [num_item] items in your cart": {type : "variable", types : [PLURALITY], 
+         singular: "You have [num_items] item in your cart", 
+         plural : "You have [num_items' items in your cart"}}, 
+     {"The best [item_name] in France", type "simple", "simple" : "The best [item_name] in France"}
+     ],
+ fr : [
+     {"Welcome to Kaneru": {type : "simple", "simple" : "Bienvenue à Kaneru"}}, 
+     {"You have [num_item] items in your cart": {type : "variable", types : [PLURALITY], 
+         singular: "Vous avez [num_items] article dans votre panier", 
+         plural : "Vous avez [num_items] articles dans votre panier"}}, 
+     {"The best [item_name] in France", type "variable", types : [GENDER],
+         tag: "nouns",
+         feminine: "La meilleure [item_name] de France",
+         masculine: "Le meilleur [item_name] de France"}}
+     ]
+}
+
+language file : fr.json   
+
+{nouns: 
+    {"wine" : {"vin" : "masculine"},
+    {"beer" : {"bière" : "feminine"}
+}  
