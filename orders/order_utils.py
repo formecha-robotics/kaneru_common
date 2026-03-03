@@ -400,7 +400,7 @@ def get_shipping_costs(rid, company_preferences, destination, method, items):
     source_country = company_preferences["address"]["Country"]
     source_prefecture = company_preferences["address"]["State-Prefecture"] 
 
-    print(company_preferences["boxes"])
+    #print(company_preferences["boxes"])
 
     if source_country != destination['Country']:
         raise ValueError("International shipping not supported")
@@ -482,7 +482,6 @@ def enrich_inv_data(
 
     # 2) Fetch missing from service
     if missing:
-        print("HEre")
         response = service_request(
             INVENTORY_GATEWAY,
             "inventory",
@@ -518,13 +517,13 @@ def enrich_inv_data(
 def _pending_orders_cache_key(company_id: int) -> str:
     return f"pending_orders_{company_id}"
 
-def pending_order_count_redis_write(r: redis.Redis, company_id: int, total: int) -> None:
+def pending_order_count_redis_write(r: redis.Redis, company_id: int, total: Dict[str, Any]) -> None:
     """
     Write count to redis with TTL.
     """
     key = _pending_orders_cache_key(company_id)
     # store as plain integer string
-    r.setex(key, PENDING_ORDERS_TTL_SECONDS, str(int(total)))
+    r.setex(key, PENDING_ORDERS_TTL_SECONDS, json.dumps(total, ensure_ascii=False))
 
 
 def pending_order_count_redis_read(r: redis.Redis, company_id: int):
@@ -546,7 +545,7 @@ def pending_order_count_db(conn, company_id):
     try:
         cursor = conn.cursor(dictionary=True)
         query = """
-            SELECT COUNT(DISTINCT c.venue_order_id) AS total_pending_orders
+            SELECT DISTINCT c.order_commit_id AS order_commit_id
             FROM order_commit c
             JOIN order_commit_lines l
               ON c.order_commit_id = l.order_commit_id
@@ -554,8 +553,9 @@ def pending_order_count_db(conn, company_id):
               AND c.status = 'COMMITTED'
         """
         cursor.execute(query, (company_id,))
-        result = cursor.fetchone()
-        return result["total_pending_orders"] if result else 0
+        result = cursor.fetchall()
+        out = {"total":len(result), "ids" : [r["order_commit_id"] for r in result]} if result else None
+        return out
     except Error as e:
         raise ValueError("pending_order_count_db: Failed to get total pending") from e
    

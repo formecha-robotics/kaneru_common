@@ -277,14 +277,15 @@ def complete_checkout():
         company_list = commit_order(conn, request_id, customer_id, venue_id, venue_order_id, inv_order_reservation_id, ccy, item_total_cost, shipping_cost)   
         
         for company_id in company_list: 
-            total = pending_order_count_db(conn, company_id['company_id'])  
-            pending_order_count_redis_write(redis.Redis(**redis_credentials), company_id['company_id'], total)
+            pending_total = pending_order_count_db(conn, company_id['company_id'])
+            #total = pending_total["total"]
+            #print(total)
+            pending_order_count_redis_write(redis.Redis(**redis_credentials), company_id['company_id'], pending_total)
               
         conn.commit() #don't remove unless you are certain the commit tables are being populated
           
     except Exception as e:
         conn.rollback()    
-    
         return jsonify({
             "ok": False,
             "received_at": now_iso(),
@@ -313,16 +314,16 @@ def _pending_order_count(company_id):
     # 1) try redis
     cached_total = pending_order_count_redis_read(r, company_id)
     if cached_total is not None:
-        return cached_total
+        return cached_total#['total']
 
     # 2) fallback db
     conn = mysql.connector.connect(**db_credentials)
-    total = pending_order_count_db(conn, company_id)
+    pending_total = pending_order_count_db(conn, company_id)
+    #total = pending_total["total"]
     conn.close()
 
-    pending_order_count_redis_write(r, company_id, total)
-
-    return total
+    pending_order_count_redis_write(r, company_id, pending_total)
+    return pending_total#["total"]
 
 
 
@@ -344,8 +345,8 @@ def pending_order_count():
 
     try:
 
-        total = _pending_order_count(company_id)
-        return jsonify({"total_pending_orders": total, "cached": False}), 200
+        pending_total = _pending_order_count(company_id)
+        return jsonify({"total_pending_orders": pending_total['total'], "cached": False}), 200
 
     except Error as e:
         return jsonify({"error": str(e), "request_id": rid}), 500
@@ -368,7 +369,26 @@ def pending_orders():
 
     company_id = data.get("company_id", None) 
     
-    print(f"Order Count: {_pending_order_count(company_id)}")       
+    pending_cached = _pending_order_count(company_id)   
+    pending_commit_ids = pending_cached['ids']  
+    
+    new_pending = []
+    order_details_cached = {}
+    
+    for i in pending_commit_ids:
+        doc = load_order_document(order_commit_id=i, company_id=company_id, aes_key=aes_key)
+        if doc is None:
+            new_pending.append(i)
+        else:
+            order_details_cached[i]=doc
+             
+    #check if the id is doc cached, if it is pop the id and keep the document
+    
+    if len(new_pending) == 0:
+        order_details = list(order_details_cached.values())
+        return jsonify({"pending_orders": order_details}), 200        
+    
+    placeholders = ", ".join(["%s"] * len(new_pending))
 
     rid = request.headers.get("X-Request-Id")
 
@@ -380,17 +400,18 @@ def pending_orders():
         conn =  mysql.connector.connect(**db_credentials)
         cursor = conn.cursor(dictionary=True)
 
-        query = """
+        query = f"""
 		SELECT DISTINCT c.order_commit_id, c.user_id, c.venue_order_id, c.venue_id, c.commit_time, c.ccy, c.item_total_cost, c.shipping_cost
 		FROM order_commit c
 		JOIN order_commit_lines l
 		ON c.order_commit_id = l.order_commit_id
 		WHERE l.company_id = %s
+		AND c.order_commit_id in ({placeholders})
 		AND c.status = 'COMMITTED'
 		ORDER BY c.order_commit_id asc;
                """
-
-        cursor.execute(query, (company_id,))
+               
+        cursor.execute(query, [company_id] + new_pending)
         results = cursor.fetchall()
         
         if len(results) == 0:
@@ -458,10 +479,9 @@ def pending_orders():
             o["shipping_info"] = shipping_info
             shipping_cost = o.pop("shipping_cost", None)
             
-        order_details = list(orders_by_id.values())
-        #print(order_details)
+        print(orders_by_id)
         
-        """
+        
         for order_id in orders_by_id.keys():
             order = orders_by_id[order_id]
             store_order_document(
@@ -470,11 +490,15 @@ def pending_orders():
                 order_doc_dict = order,
                 aes_key = aes_key,
                 key_id = 1)
-        """
+        
+        all_order_details = {**order_details_cached, **orders_by_id}
+        order_details = list(all_order_details.values())
+
         
         return jsonify({"pending_orders": order_details}), 200
 
     except Error as e:
+        print(e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -512,10 +536,11 @@ def cancel_order():
       
         conn = mysql.connector.connect(**db_credentials)
         status = cancel_order_utils(conn, rid, venue_id, venue_order_id)
-        total = pending_order_count_db(conn, company_id)        
+        pending_total = pending_order_count_db(conn, company_id)
+        #total = pending_total["total"]       
         conn.commit() #don't remove unless you are certain the commit tables are being populated
                
-        pending_order_count_redis_write(redis.Redis(**redis_credentials), company_id, total)
+        pending_order_count_redis_write(redis.Redis(**redis_credentials), company_id, pending_total)
 
         if not status:
             print("Cancellaton failure in inventory service")
