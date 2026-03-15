@@ -390,6 +390,7 @@ def get_book_images():
          
     return jsonify({"image_bytes" : results['image']}), 200
      
+"""
 @app.route('/ecomm_website/get_featured', methods=['GET'])    
 def get_books():
 
@@ -403,10 +404,11 @@ def get_books():
     
         
     return jsonify({"featured" : results}), 200
+""" 
    
 @app.route('/ecomm_venue_publish', methods=['POST'])
 def ecomm_venue_publish():
- 
+
 
     try:
         data_dict = json.loads(request.data)

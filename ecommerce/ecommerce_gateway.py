@@ -99,8 +99,14 @@ def ecommerce_pub_details():
         ORDER BY m.pub_id ASC;
     """
 
+    #To do: need to get rid of numerical currency code and move to codes like JPY
+    print("#### to do, need to fix currency codes #####")
+    ccy_mapping = { 2 : "JPY"}
     result = db.execute_query(db_query, pub_ids_unique)
-
+    for r in result:
+        ccy_code = r.pop("ccy_code")
+        r["ccy"] = ccy_mapping[ccy_code]
+        
     return result
 
 if __name__ == "__main__":

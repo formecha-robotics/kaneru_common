@@ -16,6 +16,8 @@ from production.kaneru_login import update_email
 from production.kaneru_login import update_mobile
 from production.kaneru_login import update_username_db
 from production.kaneru_login import confirm_pending_user_verification_id
+
+
 from production.user_details.user_details import validate_username
 from production.user_details.user_details import retrieve_all
 from production.user_details.user_details import retrieve_preferences
