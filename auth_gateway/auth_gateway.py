@@ -45,7 +45,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-from production.auth_gateway.jwt_config import (
+from jwt_config import (
     AUTH_CALL_MATRIX,
     SERVICE_NAME,
     INTERNAL_ISSUER,
@@ -67,13 +67,7 @@ def get_caller_ip():
 
 @app.before_request
 def enforce_jwt_internal_policy():
-    success, err_code, msg = enforce_internal_policy(request, AUTH_CALL_MATRIX, ALLOWED_GATEWAY_DETAILS, SERVICE_NAME, INTERNAL_ISSUER, CLOCK_SKEW)
-    
-    if not success:
-       logger.error("permission failure | request_id=%s | error=%s", g.request_id, msg)
-       return jsonify({"error": msg}), err_code
-
-    return None
+    enforce_internal_policy(request, AUTH_CALL_MATRIX, ALLOWED_GATEWAY_DETAILS, SERVICE_NAME, INTERNAL_ISSUER, CLOCK_SKEW)
 
 # =========================
 # Routes
@@ -93,7 +87,6 @@ def validate_user():
     
     auth_status, user_id = new_validate_api_authorization(session_key, x_user_id)
     if not auth_status:
-        logger.error("validate_api_permission unauthorized | request_id=%s | user_id=%s", rid, x_user_id,)
         return {"error": "Unauthorized"}, NOT_AUTHORIZED 
     
     

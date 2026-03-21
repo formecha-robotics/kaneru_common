@@ -8,33 +8,13 @@ from production.credentials import db_credentials as credentials
 
 def add_inventory_listings(venue_listings, company_id):
 
-    is_success, pub_map_tuble = db_add_inventory_listings(venue_listings, company_id)
-    
-    pub_map = {t[1]: t[0] for t in pub_map_tuble}
+    is_success = db_add_inventory_listings(venue_listings, company_id)
     
     if is_success:
-        print(venue_listings)  
+    
         inv_id = venue_listings[0]['inv_id']
-        pub_id = pub_map[inv_id]
-        
-        try:
-            connection = mysql.connector.connect(**credentials)        
-            cursor = connection.cursor(dictionary=True)
-            pub_tag_insert = f"""
-               INSERT INTO ecomm_pub_tag(tag_id, pub_id)
-               VALUES(1, %s)
-               """
-            cursor.execute(pub_tag_insert, (pub_id,))
-            connection.commit()
-            cursor.close()
-            connection.close()
-            
-        except:
-            cursor.close()
-            connection.close()
-               
         secret = "YOUR_SECRET_TOKEN"
-        res = requests.get(f"https://tokyo-english-bookshelf.ngrok.io/api/revalidate?pub_id={pub_id}&secret={secret}")
+        res = requests.get(f"https://tokyo-english-bookshelf.ngrok.io/api/revalidate?inv_id={inv_id}&secret={secret}")
         
         return True
         
@@ -46,7 +26,7 @@ def db_add_inventory_listings(listing_details, company_id):
     print(listing_details)
 
     if listing_details is None or len(listing_details) == 0:
-        return None, None
+        return None
 
     try:
     
@@ -168,8 +148,8 @@ def db_add_inventory_listings(listing_details, company_id):
             connection.rollback()
             cursor.close()
             connection.close()
-            return None, None
+            return None
                                 
-    return True, ecomm_map_data 
+    return True 
     
     

@@ -267,8 +267,6 @@ def get_all():
 
 def new_listings():
 
-    filter_builder(1, 5) # need to fix this
-    print("###### This needs fixing a.s.a.p")
     cache_name = kp["ECOMM_FEATURES"]["key_prefix"] + "New_Arrivals"
     expiry_min = kp["ECOMM_FEATURES"]["expiry_policy"]
         

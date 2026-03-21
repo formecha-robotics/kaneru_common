@@ -1,6 +1,8 @@
-import os
+import logging
 import requests
 from common.jwt_mint import mint_internal_jwt
+
+log = logging.getLogger(__name__)
 
 def service_request(url_base, audience, route, payload, rid):
     url = f"{url_base.rstrip('/')}/{route.lstrip('/')}"
@@ -14,15 +16,15 @@ def service_request(url_base, audience, route, payload, rid):
             scopes=[scope],
             rid=rid,
             ttl_seconds=30,
-        )    
-    
+        )   
+            
         headers = {
             "Authorization": "Bearer {}".format(token),
             "X-Request-Id" : rid,
             "Content-Type": "application/json"
         }
         
-        print(url)
+        log.info("service_request | %s", url)
         response = requests.request(url=url, method = "POST", headers=headers, json=payload, timeout=10)
 
 

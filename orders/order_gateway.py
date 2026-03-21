@@ -1,50 +1,21 @@
 from __future__ import annotations
 
-from flask import Flask, request, jsonify, make_response, g
-import uuid
+from flask import Flask, request, jsonify, make_response
 import time
 import requests
-import redis
 from production.orders.order_utils import map_order_lines_to_inventory
 from production.orders.order_utils import insert_order_reservations
 from production.orders.order_utils import release_reservation
 from production.orders.order_utils import allocate_orders
 from production.orders.order_utils import check_reserved_orders
 from production.orders.order_utils import commit_order
-from production.orders.order_utils import cancel_order_utils
-from production.orders.order_utils import pending_order_count_db
-from production.orders.order_utils import enrich_inv_data
-from production.orders.order_utils import get_shipping_costs
-from production.orders.order_utils import get_company_shipping_preferences
-from production.orders.order_utils import pending_order_count_redis_read
-from production.orders.order_utils import pending_order_count_redis_write
-from production.orders.order_document import store_order_document
-from production.orders.order_document import load_order_document
-from production.orders.order_address import retrieve_order_address
 from production.orders.order_notifications import send_notification
 from production.orders.services import service_request
 from production.orders.services import INVENTORY_GATEWAY
 import mysql.connector
-from mysql.connector import Error
-from production.credentials import db_credentials, redis_credentials
+from production.credentials import db_credentials
 from production.error_codes import *
-from production.jwt_public_helpers import enforce_internal_policy
-from collections import OrderedDict
 import logging
-
-
-    
-aes_key = bytes.fromhex(
-    "6f3c8e1b9a4d72f0c2b1e4a987d3f6c8a5e1d9b7c4f2a6083e7d1c9b5a2f4e60"
-)
-
-from production.orders.jwt_config import (
-    AUTH_CALL_MATRIX,
-    SERVICE_NAME,
-    INTERNAL_ISSUER,
-    ALLOWED_GATEWAY_DETAILS,
-    CLOCK_SKEW
-)
 
 log = logging.getLogger(__name__)
 
@@ -53,30 +24,19 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s"
 )
 
-ORDER_TIMEOUT_SEC = 900
-
 app = Flask(__name__)
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-
-@app.before_request
-def enforce_jwt_internal_policy():
-    success, err_code, msg = enforce_internal_policy(request, AUTH_CALL_MATRIX, ALLOWED_GATEWAY_DETAILS, SERVICE_NAME, INTERNAL_ISSUER, CLOCK_SKEW)
-    
-    if not success:
-       log.error("permission failure | request_id=%s | error=%s", g.request_id, msg)
-       return jsonify({"error": msg}), err_code
-
-    return None
-
 @app.get("/health")
 def health():
     return jsonify({"ok": True, "time": now_iso()}), 200
 
-@app.route("/order/start_checkout", methods=["POST"])
+@app.route("/order/start_checkout", methods=["POST", "OPTIONS"])
 def start_checkout():
+
+    print("****NB need to fix credential checks *******")
 
     if not request.is_json:
         return jsonify({"ok": False, "error": "Expected application/json"}), 415
@@ -84,23 +44,11 @@ def start_checkout():
     data = request.get_json(silent=True)
     if data is None:
         return jsonify({"ok": False, "error": "Invalid JSON"}), 400
-        
-    rid = request.headers.get("X-Request-Id")
-
-    if not rid:
-        rid = str(uuid.uuid4())
 
     log.info("=== /order/start_checkout ===")
 
     try:
-        item_list = data.get("lines", [])
-        sent_prices = {i['sku']: {'price': i['item_price'], 'ccy': i['ccy']} for i in item_list}
-        pub_inv_map = map_order_lines_to_inventory(rid, data)
-        ccy = data['ccy']
-        item_total_cost = data['item_total_cost']
-        shipping_cost = data['shipping_cost']
-        user_id = data['user_id']
-        
+        pub_inv_map = map_order_lines_to_inventory(data)
     except:
         return jsonify({
             "ok": False,
@@ -108,29 +56,7 @@ def start_checkout():
             "echo": "Can't map to inventory"}), 500
  
     data['lines'] = pub_inv_map
-    record_prices = {f"PUB-{i['pub_id']}": {'price': i['item_price'], 'ccy': i['ccy']} for i in data['lines']}
-    # Do a sanity check of prices, it's possible a nefarious actor sent lower prices from front end
-    matched = True
-    for pub_label, pub_vals in sent_prices.items():
-        sprice = pub_vals["price"]
-        sccy = pub_vals["ccy"]
-        record_vals = record_prices.get(pub_label, None)
-        if record_vals is None:
-            matched = False
-            break 
-        rprice = record_vals["price"]
-        rccy = record_vals["ccy"]
-        if rprice != sprice or rccy != sccy:
-            matched = False
-            break 	
-    
-    if not matched:
-        return jsonify({
-            "ok": False,
-            "received_at": now_iso(),
-            "echo": "Mismatch of prices"}), 500  
-                 
-    response = service_request(INVENTORY_GATEWAY, "inventory", "/inventory/reserve", data, rid)
+    response = service_request(INVENTORY_GATEWAY, "/inventory/reserve", data)
         
     if not response["ok"]:
         #log.exception("No FCM tokens for company_id=%s (skipping notification send)", company_id)
@@ -142,7 +68,7 @@ def start_checkout():
     try:
 
         conn = mysql.connector.connect(**db_credentials)  
-        insert_count = insert_order_reservations(conn, response['data']['confirm'], user_id, ccy, item_total_cost, shipping_cost, pub_inv_map)
+        insert_count = insert_order_reservations(conn, response['data']['confirm'])
         
     except Exception as e:
         conn.rollback()       
@@ -163,7 +89,7 @@ def start_checkout():
     }), 200
 
 
-@app.route("/order/cancel_checkout", methods=["POST"])
+@app.route("/order/cancel_checkout", methods=["POST", "OPTIONS"])
 def cancel_checkout():
 
     if not request.is_json:
@@ -180,20 +106,13 @@ def cancel_checkout():
                 
     if not request_id:
         return jsonify({"ok": False, "error": "Missing details"}), BAD_REQUEST
-
-    rid = request.headers.get("X-Request-Id")
-
-    if not rid:
-        rid = str(uuid.uuid4())
           
     log.info("=== /order/cancel_checkout ===")  
-        
-    print("****NB there is no real protection for some nefarious actor deleting orders we need to make sure company owns it ***")    
         
     try:
       
         conn = mysql.connector.connect(**db_credentials)
-        status = release_reservation(conn, rid, request_id)
+        status = release_reservation(conn, request_id)
         conn.commit()
     
         if not status:
@@ -224,8 +143,10 @@ def cancel_checkout():
 
           
 
-@app.route("/order/complete_checkout", methods=["POST"])
+@app.route("/order/complete_checkout", methods=["POST", "OPTIONS"])
 def complete_checkout():
+
+    print("****NB need to fix credential checks *******")
 
     if not request.is_json:
         return jsonify({"ok": False, "error": "Expected application/json"}), 415
@@ -236,15 +157,9 @@ def complete_checkout():
 
     request_id = data.get("request_id", None)      
 
-    rid = request.headers.get("X-Request-Id")
-
-    if not rid:
-        rid = str(uuid.uuid4())
-
     log.info("=== /order/complete_checkout ===")
 
     reserved_results = []
-    company_list = []
 
     try:
       
@@ -254,26 +169,29 @@ def complete_checkout():
             return jsonify({
                 "ok": False,
                 "received_at": now_iso(),
-                "echo": f"Cancellaton failure: no reservations"}), 500          
+                "echo": f"Cancellaton failure: {e}"}), 500          
     
         request_id = reserved_results[0]['request_id']
         venue_id = reserved_results[0]['venue_id']        
-        venue_order_id = reserved_results[0]['venue_order_id']
-        inv_order_reservation_id = reserved_results[0]['inv_order_reservation_id']  
-        ccy = reserved_results[0]['ccy'] 
-        item_total_cost = reserved_results[0]['item_total_cost'] 
-        shipping_cost = reserved_results[0]['shipping_cost'] 
-        customer_id = reserved_results[0]['user_id'] 
-                        
-        status = allocate_orders(rid, request_id, venue_id, venue_order_id)    
+        venue_order_id = reserved_results[0]['venue_order_id']   
+        
+        print(venue_order_id)
+            
+        status = allocate_orders(request_id, venue_id, venue_order_id)    
+        
+        commit_order(conn, reserved_results)
         
         if not status:
             
             return jsonify({
                 "ok": False,
                 "received_at": now_iso(),
-                "echo": f"Cancellaton failure: allocation failure"}), 500       
+                "echo": f"Cancellaton failure: {e}"}), 500       
                 
+<<<<<<< Updated upstream
+               
+            
+=======
         company_list = commit_order(conn, request_id, customer_id, venue_id, venue_order_id, inv_order_reservation_id, ccy, item_total_cost, shipping_cost)   
         
         for company_id in company_list: 
@@ -284,6 +202,7 @@ def complete_checkout():
               
         conn.commit() #don't remove unless you are certain the commit tables are being populated
           
+>>>>>>> Stashed changes
     except Exception as e:
         conn.rollback()    
         return jsonify({
@@ -294,9 +213,8 @@ def complete_checkout():
     finally:
         conn.close()
     
-    for company_id in company_list: 
-        print(f"Sending notification to company_id: {company_id['company_id']}")
-        send_notification(rid, {"company_id" : company_id['company_id'], "msg" : request_id, "auxillary_data" : {"type": "NEW_ORDER", "order_id": "", "venue_order_id": ""}})       
+    #send_notification({"company_id" : data['company_id'], "msg" : data['venue_order_id'], "auxillary_data" : {"type": "NEW_ORDER", "order_id": data['request_id'], "venue_order_id": data['venue_order_id']}})   
+    send_notification({"company_id" : 1, "msg" : request_id, "auxillary_data" : {"type": "NEW_ORDER", "order_id": "", "venue_order_id": ""}})       
 
 
     # Dummy response so your UI can show something
@@ -307,6 +225,8 @@ def complete_checkout():
     }), 200
 
 
+<<<<<<< Updated upstream
+=======
 def _pending_order_count(company_id):
 
     r = redis.Redis(**redis_credentials)
@@ -560,6 +480,7 @@ def cancel_order():
 
 
 
+>>>>>>> Stashed changes
 if __name__ == "__main__":
     # Run: python3 orders_server.py
     app.run(host="0.0.0.0", port=8007)

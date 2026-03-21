@@ -106,12 +106,12 @@ def update_inventory(client_details, company_id, quantity):
                 conn.start_transaction()
             
                 cursor.execute(
-                    """SELECT inv_location_id
-                       FROM inv_location_mapping
+                    """SELECT loc_unique_id
+                       FROM company_details_location_mapping
                        WHERE location = %s
                        AND sublocation = %s
                        AND company_id = %s""", 
-                   (location, sublocation, company_id)
+                   (location, sublocation, str(company_id))
                   
                 )
                 
@@ -121,18 +121,19 @@ def update_inventory(client_details, company_id, quantity):
                 cursor.execute(
                     """SELECT quantity
                        FROM inv_location_stock
-                       WHERE inv_location_id = %s
-                       AND inv_id = %s """, 
-                   (location_id, inv_id)
+                       WHERE loc_unique_id = %s
+                       AND inv_id = %s 
+                       AND company_id = %s""", 
+                   (location_id, inv_id, str(company_id))
                   
                 )
                 
                 result = cursor.fetchall()
                 if len(result) == 0:
                     cursor.execute(
-                        """INSERT INTO inv_location_stock (inv_id, inv_location_id, quantity)
-                           VALUES (%s, %s, %s)""",
-                       (inv_id, location_id, quantity)
+                        """INSERT INTO inv_location_stock (inv_id, loc_unique_id, quantity, company_id)
+                           VALUES (%s, %s, %s, %s)""",
+                       (inv_id, location_id, quantity, str(company_id))
                     )
                     
                 else:
@@ -143,8 +144,9 @@ def update_inventory(client_details, company_id, quantity):
                         """UPDATE inv_location_stock 
                            SET quantity = %s
                            WHERE inv_id = %s 
-                           AND inv_location_id = %s """,
-                       (new_quantity, inv_id, location_id)
+                           AND loc_unique_id = %s 
+                           AND company_id = %s""",
+                       (new_quantity, inv_id, location_id, str(company_id))
                     )
                     
                 cursor.execute(
@@ -154,11 +156,13 @@ def update_inventory(client_details, company_id, quantity):
                     SELECT IFNULL(SUM(quantity), 0) 
                     FROM inv_location_stock 
                     WHERE inv_id = %s
+                    AND company_id = %s
                     )
                     WHERE inv_id = %s
+                    AND company_id = %s
                     AND inv_variant_id = %s
                     """,
-                    (inv_id, inv_id, 0)
+                    (inv_id, str(company_id), inv_id, str(company_id), 0)
                 )
                 
                 conn.commit()
@@ -343,12 +347,12 @@ def write(client_details, image_bytes, company_id, is_vintage, variant_id = 0, o
     if not overwrite:
         inventory_location = client_details['inv_details']['location']
         inventory_sublocation = client_details['inv_details']['sublocation']
-        db_query = "SELECT inv_location_id FROM inv_location_mapping "\
+        db_query = "SELECT loc_unique_id FROM company_details_location_mapping "\
            "WHERE location = %s AND sublocation = %s AND company_id= %s"
-        inv_params = (inventory_location, inventory_sublocation, company_id)
+        inv_params = (inventory_location, inventory_sublocation, str(company_id))
         inventory_results = db.execute_query(db_query, inv_params)
     
-        inv_location_id = inventory_results[0]['inv_location_id']
+        loc_unique_id = inventory_results[0]['loc_unique_id']
     
         
     ## now get publisher details
@@ -440,10 +444,11 @@ def write(client_details, image_bytes, company_id, is_vintage, variant_id = 0, o
         db_query = f"""SELECT b.inv_desc_id
                        FROM inventory i
                        JOIN book_desc b ON i.inv_desc_id = b.desc_id
-                       WHERE i.inv_id = %s;"""
+                       WHERE i.inv_id = %s
+                       AND i.company_id = %s"""
         
 
-        results = db.execute_query(db_query, (previous_id,))
+        results = db.execute_query(db_query, (previous_id, str(company_id)))
         inv_description_id = results[0]['inv_desc_id'] 
                        
     try:
@@ -534,24 +539,24 @@ def write(client_details, image_bytes, company_id, is_vintage, variant_id = 0, o
                               
                 if overwrite:
                     cursor.execute(
-                        "INSERT INTO inventory (inv_id, inv_cat_id, inv_desc_id, inv_condition_id, quantity, inv_unit_id, inv_variant_id )  VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                        (previous_id, inv_cat_id, description_id, condition_mapping[condition], quantity, inv_unit_id, variant_id)
+                        "INSERT INTO inventory (inv_id, inv_cat_id, inv_desc_id, inv_condition_id, quantity, inv_unit_id, inv_variant_id, company_id )  VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (previous_id, inv_cat_id, description_id, condition_mapping[condition], quantity, inv_unit_id, variant_id, str(company_id))
                     )                
                 
                     inv_id = previous_id                      
                 
                 else:                           
                     cursor.execute(
-                        "INSERT INTO inventory (inv_cat_id, inv_desc_id, inv_condition_id, quantity, inv_unit_id, inv_variant_id )  VALUES (%s, %s, %s, %s, %s, %s)",
-                        (inv_cat_id, description_id, condition_mapping[condition], quantity, inv_unit_id, variant_id)
+                        "INSERT INTO inventory (inv_cat_id, inv_desc_id, inv_condition_id, quantity, inv_unit_id, inv_variant_id, company_id )  VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (inv_cat_id, description_id, condition_mapping[condition], quantity, inv_unit_id, variant_id, str(company_id))
                     )                
                 
                     inv_id = cursor.lastrowid        
             
                 if not overwrite:
                     cursor.execute(
-                        "INSERT INTO inv_location_stock (inv_id, inv_location_id, quantity) VALUES (%s, %s, %s)",
-                        (inv_id, inv_location_id, quantity)
+                        "INSERT INTO inv_location_stock (inv_id, loc_unique_id, quantity, company_id) VALUES (%s, %s, %s, %s)",
+                        (inv_id, loc_unique_id, quantity, str(company_id))
                     )
                     
                     if variant_id !=0 and variant_name !="default":

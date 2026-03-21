@@ -39,19 +39,15 @@ from production.kaneru_io import get_embedded_categories
 from production.kaneru_io import cache_partial_book_description
 from production.kaneru_io import get_checksums
 from production.kaneru_io import get_item_location
-from production.kaneru_io import get_available_venues
 from production.kaneru_io import generate_session_token
 from production.kaneru_io import string_to_authors
-from production.kaneru_inventory_location import get_inventory_locations_for_items
-from production.kaneru_inventory_location import move_inventory_items_to_location
 from production.kaneru_book_category import get_matching_categories
 from production.kaneru_book_category import store_validated_categories
 import production.kaneru_product_finder as search
 import production.book_utils as bk
 import production.save_book as save_book
 import production.kaneru_job_launcher as job_exec
-import production.kaneru_inventory_location as loc
-import production.get_fx as fx
+import requests
 import production.kaneru_search as inv_search
 import production.kaneru_typesense as typesense
 import production.kaneru_submit_background as submit_job
@@ -63,6 +59,24 @@ import production.database_commands as db
 from production.error_codes import *
 from datetime import datetime
 import time
+
+FINANCIALS_GATEWAY_URL = "http://localhost:8881"
+
+
+def convert_ccy_price(price, price_ccy, target_ccy):
+    """Legacy shim — calls financials_gateway /financials/convert."""
+    try:
+        res = requests.post(
+            f"{FINANCIALS_GATEWAY_URL}/financials/convert",
+            json={"price": price, "from_ccy": price_ccy, "to_ccy": target_ccy},
+            timeout=10,
+        )
+        data = res.json()
+        if data.get("status") == "ok":
+            return data["data"]["converted_price"]
+    except Exception as e:
+        print(f"financials_gateway convert failed: {e}")
+    return None
 
 app = Flask(__name__)
 CORS(app)  
@@ -312,11 +326,13 @@ def price_data():
         for book in data["books"]:
 
             seq = book.get("seq", 0)
-            token = book.get("session_token", "NA")
-            if token != "NA":
-                is_pricing = job_exec.is_running('PRICER', token)
-                if is_pricing:
-                    status = job_exec.wait_job('PRICER', token)
+            print("We broke this with bit with session tokens in auth I guess!")
+           # token = book.get("session_token", "NA")
+           # print(token)
+           # if token != "NA":
+           #     is_pricing = job_exec.is_running('PRICER', token)
+           #     if is_pricing:
+           #         status = job_exec.wait_job('PRICER', token)
                     
             if not book.get('subtitle'):
                 book['subtitle'] = None
@@ -331,7 +347,7 @@ def price_data():
             if dollar_price is None:
                 yen_price = 0.0
             else:
-                yen_price = fx.convert_ccy_price(float(dollar_price), "USD", "JPY")
+                yen_price = convert_ccy_price(float(dollar_price), "USD", "JPY")
             item = {"seq": seq, "recommended" : yen_price, "ccy" : "JPY", "aggressive" : None, "wholesale" : None, "sale_freq" : None}
             output.append(item)
     
@@ -452,170 +468,6 @@ def ecomm_venue_inv_mapping():
     else:
         return jsonify({"inv_list" : results}), 200
 
-
-@app.route('/inventory_get_locations', methods=['POST'])
-def inventory_get_locations():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-        
-    company_id = data_dict.get('company_id')
-    
-    if not company_id:
-        return jsonify({'error': 'Missing id code'}), 400
-
-    locations = loc.locations_list(int(company_id))
-        
-    response = { "locations" : locations }
-    
-    return jsonify(response), 200   
-    
-@app.route('/inventory_add_location', methods=['POST'])     
-def inventory_add_location():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-        
-    new_location = data_dict.get('new_location')
-    
-    if not new_location:
-        return jsonify({'error': 'Missing id code'}), 400
-        
-    company_id = new_location['company_id']
-    location = new_location['location']
-    sublocation = new_location['sublocation']        
-       
-    if not company_id or not location or not sublocation:
-        return jsonify({'error': 'Missing data'}), 400
-        
-    result = loc.add_location(location, sublocation, company_id)
-    
-    if not result:
-        return jsonify({'error': 'Internal Error'}), 400
-        
-    return jsonify({"status" : "OK"}), 200 
-    
-@app.route('/inventory_rename_location', methods=['POST'])     
-def inventory_rename_location():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-        
-    rename_location = data_dict.get('rename_location')
-    
-    if not rename_location:
-        return jsonify({'error': 'Missing id code'}), 400
-        
-    company_id = rename_location['company_id']
-    location = rename_location['location']
-    new_location = rename_location['new_location']        
-       
-    if not company_id or not location or not new_location:
-        return jsonify({'error': 'Missing data'}), 400
-        
-    result = loc.rename_location(location, new_location, company_id)
-    
-    if not result:
-        return jsonify({'error': 'Internal Error'}), 400
-        
-    return jsonify({"status" : "OK"}), 200 
-
-@app.route('/inventory_rename_sublocation', methods=['POST'])     
-def inventory_rename_sublocation():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-        
-    rename_sublocation = data_dict.get('rename_sublocation')
-    
-    if not rename_sublocation:
-        return jsonify({'error': 'Missing id code'}), 400
-        
-    company_id = rename_sublocation['company_id']
-    location = rename_sublocation['location']
-    sublocation = rename_sublocation['sublocation']        
-    new_sublocation = rename_sublocation['new_sublocation'] 
-           
-    if not company_id or not location or not sublocation or not new_sublocation:
-        return jsonify({'error': 'Missing data'}), 400
-        
-    result = loc.rename_sublocation(location, sublocation, new_sublocation, company_id)
-    
-    if not result:
-        return jsonify({'error': 'Internal Error'}), 400
-        
-    return jsonify({"status" : "OK"}), 200 
-
-@app.route('/inventory_move_sublocations', methods=['POST']) 
-def inventory_move_sublocations():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-        
-    move_sublocations = data_dict.get('move_sublocations')
-    
-    if not move_sublocations:
-        return jsonify({'error': 'Missing id code'}), 400
-        
-    destination = move_sublocations['destination']
-    company_id = move_sublocations['company_id']
-    move_locations = move_sublocations['move_locations']
-    
-    if not company_id or not destination or not move_locations:
-        return jsonify({'error': 'Missing data'}), 400
-    
-    for old_location in move_locations.keys():
-        sublocation_list = move_locations[old_location]
-        if len(sublocation_list) > 0:  
-            status = loc.move_sublocation(old_location, destination, sublocation_list, company_id)
-            if not status:
-                return jsonify({'error': f'Failed to move {old_location} move incomplete'}), 400
-            
-    return jsonify({"status" : "OK"}), 200 
-
-@app.route('/inventory_delete_sublocation', methods=['POST'])     
-def inventory_delete_sublocation():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-        
-    delete_sublocation = data_dict.get('delete_sublocation')
-    
-    if not delete_sublocation:
-        return jsonify({'error': 'Missing id code'}), 400
-        
-    company_id = delete_sublocation['company_id']
-    location = delete_sublocation['location']
-    sublocation_list = delete_sublocation['sublocation']        
-           
-    if not company_id or not location or not sublocation_list:
-        return jsonify({'error': 'Missing data'}), 400
-        
-    result = loc.delete_location(location, sublocation_list, company_id)
-    
-    if not result:
-        return jsonify({'error': 'Internal Error'}), 400
-        
-    return jsonify({"status" : "OK"}), 200 
-    
 def inventory_get_book_by_id(inventory_id, by_pass_cache=False):
     
     details = get_book_details(inventory_id, by_pass_cache)   
@@ -695,43 +547,6 @@ def inventory_get_book_list():
     response = { "book_list" : book_list }
     
     return jsonify(response), 200  
-
-@app.route('/move_sublocation_items', methods=['POST'])
-def move_sublocation_items():
- 
-
-    try:
-        data_dict = json.loads(request.data)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 400
-            
-        
-    destination_location = data_dict.get('location')
-    destination_sublocation = data_dict.get('sublocation')
-    inv_ids = data_dict.get('inv_ids')
-    company_id = data_dict.get('company_id')
-    
-    if not destination_location or not destination_sublocation or not inv_ids or not company_id:
-        return jsonify({'error': 'missing parameters'}), 400
-    
-    print(destination_location)
-    print(destination_sublocation)
-    print(inv_ids)
-    
-    current_locations = get_inventory_locations_for_items(inv_ids, company_id)
-    current_locations.append({'location': destination_location, 'sublocation': destination_sublocation})
-    print(current_locations)
-    
-    success = move_inventory_items_to_location(inv_ids, company_id, destination_location, destination_sublocation)
-        
-    if not success:
-        return jsonify({'error': 'Invalid query'}), 777
-        
-    results = {'sublocations' : current_locations}
-    
-    response = { "callback_params" : results }
-    
-    return jsonify(response), 200      
  
 @app.route('/sublocation_inv_ids', methods=['POST'])
 def sublocation_inv_ids(): 
@@ -1005,7 +820,7 @@ def update_inventory_item():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/inventory', methods=['POST'])
+@app.route('/inventory_save', methods=['POST'])
 def save_inventory_items():
  
 
@@ -1547,26 +1362,6 @@ def get_inv_location():
     except Exception as e:
        return jsonify({'error': f'Invalid JSON: {e}'}), 402
 
-@app.route('/static_data/ecomm_venues', methods=['POST'])
-def ecomm_venues():      
-
- 
-
-
-    try:
-        data_dict = json.loads(request.data)
-        if data_dict is None or data_dict.get('company_id') is None:
-            return jsonify({'error': 'missing data'}), 400 
-                                        
-        response = get_available_venues(data_dict['company_id'])
-        
-        if response is None:
-             return jsonify({'error': 'invalid'}), 401                   
-    
-        return jsonify(response), 200
-    
-    except Exception as e:
-       return jsonify({'error': f'Invalid JSON: {e}'}), 402
 
 @app.route('/ecomm_website/pub_short_description', methods=['POST'])
 def ecomm_pub_short_description():      

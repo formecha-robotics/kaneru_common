@@ -67,28 +67,15 @@ AUTH_CALL_MATRIX = {
     },
 }
 
+
 # ---- Core Identity ----
-SERVICE_NAME = "auth"
+
+SERVICE_NAME = "auth_gateway"
 INTERNAL_ISSUER = os.getenv("INTERNAL_ISSUER", "kaneru-internal")
 
 CLOCK_SKEW = os.getenv("CLOCK_SKEW", 10)
 
 # ---- Verification (used by backend services) ----
 ALLOWED_GATEWAY_DETAILS = json.loads(os.getenv("ALLOWED_GATEWAY_DETAILS", "{}"))
-JWT_PUBLIC_KEY_PATH  = os.getenv("JWT_PUBLIC_KEY_PATH", None)
-
-if ALLOWED_GATEWAY_DETAILS == {} and JWT_PUBLIC_KEY_PATH:
-    with open(JWT_PUBLIC_KEY_PATH, "r") as f:
-        JWT_PUBLIC_KEY_PEM = f.read()
-        ALLOWED_GATEWAY_DETAILS = {"kaneru_gateway" : JWT_PUBLIC_KEY_PEM}
-        #print(ALLOWED_GATEWAY_DETAILS)
-
-if ALLOWED_GATEWAY_DETAILS == {}:
-    raise RuntimeError("JWT public key not configured")
-
-
-
-
-
 
 

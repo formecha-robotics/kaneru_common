@@ -16,7 +16,6 @@ IMAGE_DIR = kaneru_params["VALIDATED_IMAGES_DIR"]
 ## get_recommendation_embeddings: gets embedding associated with each pub => [JSON]
 ## get_pub_tags: gets tags for a pub => JSON
 ## generate_session_token: generates 32 byte session token
-## get_available_venues: gets available venues => [JSON]
 ## get_item_location: gets locations of inventory id => [JSON]
 ## get_checksums: gets list of checksums for inventory list => JSON
 ## get_embedding: retrieves embedding for inv_id
@@ -121,10 +120,6 @@ def get_pub_tags(company_id):
 def generate_session_token():
     return secrets.token_urlsafe(32)
 
-def get_available_venues(company_id):
-
-    result = db.get_available_venues(company_id)
-    return result
 
 def get_item_location(inv_id, company_id):
 

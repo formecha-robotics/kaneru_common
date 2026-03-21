@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 _credentials = None
 _loaded = False
 
-CREDMGR_URL = os.getenv("CREDMGR_URL", "https://localhost:8664")
+CREDMGR_URL = os.getenv("CREDMGR_URL", "http://localhost:8664")
 CREDMGR_DOMAIN = os.getenv("CREDMGR_DOMAIN", "localhost")
 
 _signing_key_b64 = os.environ.get("CREDMGR_SIGNING_KEY_B64")

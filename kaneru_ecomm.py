@@ -215,7 +215,7 @@ def get_ecomm_featured_listings(venue_id, featured_id):
         
     results = []
 
-    if listings is None or listings['results'] is None:
+    if listings is None:
        return []
 
     #condition_map = get_condition_types()

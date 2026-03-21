@@ -91,9 +91,6 @@ def base_url_for(service_key: str) -> str:
         "USER_DETAILS": 8003,
         "KANERU_JOB": 8004,
         "MAPS": 8005,
-        "TEST": 8333,
-        "ORDER" : 8007,
-        "NOTIFICATIONS" : 8010
     }
 
     host = env(f"KANERU_{key}_HOST", host_default)
@@ -112,9 +109,6 @@ ROUTING_TABLE = {
     "/user_details": base_url_for("USER_DETAILS"),
     "/kaneru_job": base_url_for("KANERU_JOB"),
     "/maps": base_url_for("MAPS"),
-    "/test": base_url_for("TEST"),
-    "/order": base_url_for("ORDER"),
-    "/notifications": base_url_for("NOTIFICATIONS"),   
 }
 
 DEFAULT_BACKEND = base_url_for(env("KANERU_DEFAULT_SERVICE", "SCANNER"))
@@ -157,25 +151,19 @@ def forward_request(target_url, service, scope):
         )
                     
         if service != "auth":
-        
-            auth_token = mint_internal_jwt(
-                audience="auth",
-                scopes=["auth.validate_api_permission"],
-                rid=rid,
-                ttl_seconds=30,
-            )
-            
             session_key = request.headers.get("Authorization")
             x_user_id = request.headers.get("X-User-Id")
+            print(session_key)
+            print(x_user_id)
             
             payload = {"session_key": session_key, "x_user_id" : x_user_id}
             auth_data = json.dumps(payload).encode("utf-8")           
             
             resp = requests.request(
                 method = "POST",
-                url = f"{ROUTING_TABLE['/auth']}/auth/validate_api_permission",
+                url = ROUTING_TABLE['/auth']+"/auth/validate_api_permission",
                 headers = {
-                    "Authorization": "Bearer {}".format(auth_token),
+                    "Authorization": "Bearer {}".format(token),
                     "X-Request-Id" : rid,
                     "Content-Type": "application/json",
                 },
@@ -188,8 +176,6 @@ def forward_request(target_url, service, scope):
                 out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in hop_by_hop}
                 return Response(resp.content, status=resp.status_code, headers=out_headers)
 
-        headers["Authorization"] = "Bearer {}".format(token)
-        headers["X-Request-Id"] = rid
         resp = requests.request(
             method=request.method,
             url=target_url,

@@ -11,7 +11,7 @@ Example outputs:
 
 from uuid6 import uuid7
 
-VALID_PREFIXES = {"usr", "inv", "cmp", "ord", "sel"}
+VALID_PREFIXES = {"usr", "inv", "cmp", "ord", "sel", "cad", "cpb", "civ"}
 
 
 def generate_id(prefix: str) -> str:

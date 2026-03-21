@@ -92,11 +92,9 @@ def ecommerce_pub_details():
     pub_placeholder = pub_placeholder[:len(pub_placeholder)-2]
 
     db_query = f"""
-        SELECT m.pub_id, m.inv_id, m.company_id, v.price, v.ccy_code
-        FROM ecomm_pub_inv_map m, ecomm_venue_listings v
-        WHERE m.pub_id in ({pub_placeholder})
-        AND m.inv_id = v.inv_id
-        ORDER BY m.pub_id ASC;
+    SELECT pub_id, inv_id, company_id FROM ecomm_pub_inv_map
+    WHERE pub_id in ({pub_placeholder})
+    ORDER BY pub_id ASC;
     """
 
     #To do: need to get rid of numerical currency code and move to codes like JPY
@@ -108,6 +106,40 @@ def ecommerce_pub_details():
         r["ccy"] = ccy_mapping[ccy_code]
         
     return result
+
+@app.route("/ecommerce/inv_to_pub", methods=["POST"])
+def ecommerce_inv_to_pub():
+    """Given a list of inv_ids, return the corresponding pub_ids."""
+
+    data = get_json_body()
+
+    inv_ids: List[int] = []
+    if isinstance(data.get("inv_ids"), list):
+        inv_ids = [int(x) for x in data["inv_ids"] if str(x).strip()]
+
+    # Deduplicate while preserving order
+    seen = set()
+    inv_ids_unique: List[int] = []
+    for iid in inv_ids:
+        if iid not in seen:
+            seen.add(iid)
+            inv_ids_unique.append(iid)
+
+    if not inv_ids_unique:
+        raise ValueError("Provide 'inv_ids' as a non-empty list.")
+
+    placeholders = ", ".join(["%s"] * len(inv_ids_unique))
+
+    db_query = f"""
+        SELECT inv_id, pub_id
+        FROM ecomm_pub_inv_map
+        WHERE inv_id IN ({placeholders})
+        ORDER BY inv_id ASC;
+    """
+
+    result = db.execute_query(db_query, inv_ids_unique)
+    return result
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)

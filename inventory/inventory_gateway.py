@@ -14,15 +14,6 @@ from production.inventory.order_queries import fetch_expired_request_ids
 from production.inventory.order_queries import commit_reservation_to_allocated
 from production.inventory.order_queries import ship_committed_order
 from production.inventory.order_queries import cancel_committed_order
-from production.inventory.order_queries import fetch_inventory_with_desc
-import logging
-
-log = logging.getLogger(__name__)
-
-logging.basicConfig(
-    level=logging.INFO,  # change to DEBUG if needed
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
 
 SUCCESS = 200
 
@@ -53,32 +44,6 @@ def require_json() -> Dict[str, Any]:
     data = request.get_json(silent=True)
     return data if isinstance(data, dict) else {}
 
-
-@app.route("/inventory/enrich_inv", methods=["POST"])
-def enrich_inv():
-
-    if not request.is_json:
-        return jsonify({"ok": False, "error": "Expected application/json"}), 415
-
-    data = request.get_json(silent=True)
-    if data is None:
-        return jsonify({"ok": False, "error": "Invalid JSON"}), 400
-
-    log.info("=== /inventory/enrich_inv ===")
-
-    company_id = data["company_id"]
-    inv_ids = data["inv_ids"] 
-
-    try:
-        enriched_data = fetch_inventory_with_desc(company_id, inv_ids);
-        
-    except:
-        return jsonify({
-            "ok": False,
-            "received_at": now_iso(),
-            "echo": "Can't map to inventory"}), 500
-
-    return jsonify({"ok": True, "enriched_data" : enriched_data}), SUCCESS
 
 @app.route("/inventory/reserve", methods=["POST", "OPTIONS"])
 def inventory_reserve():
@@ -215,7 +180,7 @@ def inventory_commit():
                 return jsonify({"ok": False, "error": "Unknown Error"}), INTERNAL_SERVER_ERROR
 
         return jsonify({"ok": True}), SUCCESS
-
+        
     except:
     
         return jsonify({"ok": False, "error": "Unknown Error"}), INTERNAL_SERVER_ERROR        

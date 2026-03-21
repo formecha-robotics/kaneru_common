@@ -1,35 +1,17 @@
 import os
 import requests
-from production.internal_jwt import mint_internal_jwt
 
 INVENTORY_GATEWAY = os.getenv("INVENTORY_BASE_URL", "http://127.0.0.1:8008")
 NOTIFICATIONS_GATEWAY = os.getenv("NOTIFICATIONS_BASE_URL", "http://127.0.0.1:8010")
 USER_DETAILS_GATEWAY = os.getenv("USER_DETAILS_URL", "http://127.0.0.1:8003")
 ECOMMERCE_GATEWAY = os.getenv("ECOMMERCE_BASE_URL", "http://127.0.0.1:8009")
-SHIPPING_GATEWAY = os.getenv("SHIPPING_BASE_URL", "http://127.0.0.1:8334")
 
-def service_request(url_base, audience, route, payload, rid):
+
+def service_request(url_base, route, payload):
     url = f"{url_base.rstrip('/')}/{route.lstrip('/')}"
 
-    scope = route.strip("/").replace("/", ".")
-
     try:
-    
-        token = mint_internal_jwt(
-            audience=audience,
-            scopes=[scope],
-            rid=rid,
-            ttl_seconds=30,
-        )    
-    
-        headers = {
-            "Authorization": "Bearer {}".format(token),
-            "X-Request-Id" : rid,
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.request(url=url, method = "POST", headers=headers, json=payload, timeout=10)
-
+        response = requests.post(url, json=payload, timeout=10)
 
         # Try to parse JSON regardless of status
         try:

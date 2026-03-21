@@ -12,35 +12,32 @@ def enforce_internal_policy(request, auth_call_matrix, gateway_key_details, serv
     Auth service is internal-only in your plan.
     Default deny: only routes in AUTH_CALL_MATRIX are accessible.
     """
-    g.request_id = request.headers.get("X-Request-Id")
     key = (request.method.upper(), request.path)
 
     rule = auth_call_matrix.get(key)
     if not rule:
-        return False, 403, "route_not_enabled"
+        return jsonify({"error": "route_not_enabled"}), 403
 
     try:
         payload = verify_internal_jwt(gateway_key_details, service_name, internal_issuer, clock_skew)
     except Exception as e:
-        return False, 401, f"invalid_internal_auth {e}"
+        return jsonify({"error": "invalid_internal_auth", "detail": str(e)}), 401
 
 
     caller = payload.get("svc")
     allowed_callers = rule.get("callers", [])
     required_scopes = rule.get("scopes", [])
-  
+
     if caller not in allowed_callers:
-        return False, 403, "forbidden"
+        return jsonify({"error": "forbidden"}), 403
 
     if not has_required_scopes(payload, required_scopes):
-        return False, 403, "forbidden"
+        return jsonify({"error": "forbidden"}), 403
 
     # Store for handlers (optional)
     g.internal = payload
     g.request_id = request.headers.get("X-Request-Id") or payload.get("rid")
-    
-    return True, 200, ""
-    
+
 def get_bearer_token() -> Optional[str]:
     h = request.headers.get("Authorization", "")
     if h.lower().startswith("bearer "):
@@ -62,7 +59,7 @@ def verify_internal_jwt(gateway_key_details, service_name, internal_issuer, cloc
     if not kid or not kid in gateway_key_details.keys():
         raise ValueError("unexpected kid")
     else:
-        gateway_public_key = gateway_key_details[kid].replace("\\n", "\n")
+        gateway_public_key = gateway_key_details[kid]
 
     payload = jwt.decode(
         token,

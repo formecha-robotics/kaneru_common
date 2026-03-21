@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import time
 import undetected_chromedriver as uc
@@ -6,6 +7,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 import re
 from datetime import datetime
+
+
+def get_chrome_major_version():
+    try:
+        output = subprocess.check_output(["google-chrome", "--version"], text=True)
+        return int(re.search(r'(\d+)\.', output).group(1))
+    except Exception:
+        return None
 
 condition_map = {'Fine' : 'Acceptable', 'As New' : 'Like New', 'Brand New' : 'Brand New', 'Good' : 'Good', 'New' : 'Brand New', 'Very Good' : 'Very Good', 'Fair' : 'Acceptable', 'Near Fine' : 'Poor', 'Vg' : 'Very Good', 'Bon' :  'Good'}
 
@@ -110,7 +119,10 @@ def fetch_prices(title, subtitle, author, use_subtitle=True):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--start-maximized")
 
-    driver = uc.Chrome(version_main=136, options=options)
+    chrome_version = get_chrome_major_version()
+    driver = uc.Chrome(version_main=chrome_version, options=options)
+
+    print("Attempting to get abe prices")
 
     try:
         driver.get(url)
@@ -182,6 +194,7 @@ def fetch_prices(title, subtitle, author, use_subtitle=True):
         return results
 
     finally:
+        print("finished abe prices")
         driver.quit()
 
 # CLI entry point

@@ -1,35 +1,121 @@
-import production.get_fx as fx
+import json
+import os
+import time
+import uuid
+
+import requests
+from kafka import KafkaConsumer, KafkaProducer
+
 import production.book_utils as bk
 import production.kaneru_io as io
-import production.ebay_search as ebay_search
-import production.abe_price_search as abe_search
 import production.book_pricer as book_pricer
-from production.kaneru_book_category import latent_price_by_embedding 
+from production.kaneru_book_category import latent_price_by_embedding
 from datetime import datetime
-import asyncio
 
-async def abe_book_search(title, subtitle, author):
-    abe_book_prices = abe_search.book_query(title, subtitle, author)
-    return abe_book_prices   
-    
-async def ebay_book_search(title, subtitle, author): 
-    ebay_book_prices = await ebay_search.book_query(title, subtitle, author)  
-    return ebay_book_prices
+FINANCIALS_GATEWAY_URL = "http://localhost:8881"
 
-async def book_search(title, subtitle, author):
+_APPLICATION_ID = os.getenv("APPLICATION_ID", "kaneru_seller").replace("_", "-")
+_KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+_PRICE_REQUEST_TOPIC = f"{_APPLICATION_ID}.price-search-request.books"
+_PRICE_RESPONSE_TOPIC = f"{_APPLICATION_ID}.price-search-response.books"
+_EXPECTED_SOURCES = {"abe", "ebay"}
+_PRICE_SEARCH_TIMEOUT = 30  # seconds to wait for all responses
 
-    coroutines = [abe_book_search(title, subtitle, author), ebay_book_search(title, subtitle, author)]
-    book_prices_array = await asyncio.gather(*coroutines)
-    book_prices = book_prices_array[0] + book_prices_array[1]
-    
-    return book_prices
+
+def convert_ccy_price(price, price_ccy, target_ccy):
+    """Legacy shim — calls financials_gateway /financials/convert."""
+    try:
+        res = requests.post(
+            f"{FINANCIALS_GATEWAY_URL}/financials/convert",
+            json={"price": price, "from_ccy": price_ccy, "to_ccy": target_ccy},
+            timeout=10,
+        )
+        data = res.json()
+        if data.get("status") == "ok":
+            return data["data"]["converted_price"]
+    except Exception as e:
+        print(f"financials_gateway convert failed: {e}")
+    return None
+
+
+def kafka_book_search(title, subtitle, author):
+    """Publish a price search request to Kafka and collect responses from all services."""
+    rid = str(uuid.uuid4())
+
+    # Start consumer BEFORE publishing so we don't miss responses
+    consumer_group = f"pricing_agent_{rid}"
+    consumer = KafkaConsumer(
+        _PRICE_RESPONSE_TOPIC,
+        bootstrap_servers=_KAFKA_BOOTSTRAP,
+        group_id=consumer_group,
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        auto_offset_reset="latest",
+        consumer_timeout_ms=(_PRICE_SEARCH_TIMEOUT * 1000),
+    )
+    # Force partition assignment
+    consumer.poll(timeout_ms=2000)
+
+    # Publish request
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers=_KAFKA_BOOTSTRAP,
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        )
+        producer.send(_PRICE_REQUEST_TOPIC, value={
+            "rid": rid,
+            "title": title,
+            "subtitle": subtitle or "",
+            "author": author or "",
+        })
+        producer.flush()
+        producer.close()
+    except Exception as e:
+        print(f"kafka publish failed: {e}")
+        consumer.close()
+        return []
+
+    # Collect responses until all sources reply or timeout
+    all_results = []
+    sources_received = set()
+    deadline = time.time() + _PRICE_SEARCH_TIMEOUT
+
+    try:
+        for message in consumer:
+            val = message.value
+            if val.get("rid") != rid:
+                continue
+
+            source = val.get("price_source", "unknown")
+            status = val.get("status")
+            data = val.get("data") or []
+
+            if status == "ok":
+                all_results.extend(data)
+                print(f"price search | rid={rid} | source={source} | results={len(data)}")
+            else:
+                print(f"price search | rid={rid} | source={source} | error={val.get('message')}")
+
+            sources_received.add(source)
+            if sources_received >= _EXPECTED_SOURCES:
+                break
+
+            if time.time() >= deadline:
+                missing = _EXPECTED_SOURCES - sources_received
+                print(f"price search timeout | rid={rid} | missing={missing}")
+                break
+    except Exception as e:
+        print(f"kafka consume error: {e}")
+    finally:
+        consumer.close()
+
+    return all_results
 
 def convert_to_usd(book_data):
 
     price = book_data['price']
     price_ccy = book_data['ccy_code']
     target_ccy = "USD"
-    usd_price = fx.convert_ccy_price(price, price_ccy, target_ccy)
+    usd_price = convert_ccy_price(price, price_ccy, target_ccy)
     book_data['price'] = usd_price
     book_data['ccy_code'] = "USD"
     return book_data
@@ -50,7 +136,8 @@ def price_get_latent_price(title, subtitle, author, isbn13):
         print(f"was cached: {latent_price}", flush=True)
         return True
 
-    book_prices = asyncio.run(book_search(title, subtitle, author))
+    print("Issuing price search")
+    book_prices = kafka_book_search(title, subtitle, author)
     book_prices = [convert_to_usd(book_data) for book_data in book_prices]
     
     print(book_prices)
@@ -73,6 +160,8 @@ def price_get_latent_price(title, subtitle, author, isbn13):
 
 def get_book_price(book):
 
+    print("################# Starting Pricer #############################")
+
     title = book['title']
     subtitle = book['subtitle']
     if subtitle is None:
@@ -91,7 +180,8 @@ def get_book_price(book):
     is_price_cached, latent_price = io.is_latent_price_cached(book_id)
     
     if not is_price_cached:
-        latent_price = latent_price_by_embedding(book_id)
+        #TODO put the latent pricer back once we get the price scrapper hooked up properly again
+        latent_price = None #latent_price_by_embedding(book_id)
         if latent_price is None:
             print("embedding failed")
             status = price_get_latent_price(title, subtitle, author, isbn_13)

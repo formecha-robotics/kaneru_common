@@ -4,7 +4,7 @@ from production.orders.services import service_request, NOTIFICATIONS_GATEWAY, U
 log = logging.getLogger(__name__)
 
 
-def send_notification(rid, data: dict) -> None:
+def send_notification(data: dict) -> None:
     """
     Best-effort: send order notifications to all FCM tokens for company_id.
     Raises on programmer misuse (missing required args). Logs operational issues.
@@ -22,16 +22,11 @@ def send_notification(rid, data: dict) -> None:
     # fetch tokens
     fcm_resp = service_request(
         USER_DETAILS_GATEWAY,
-        "notifications",
         "/user_details/fcm_token",
         {"company_id": company_id},
-        rid
     )
     
-    print(fcm_resp)
-    
-    if not fcm_resp.get("ok"):
-        print(fcm_resp.get("ok"))
+    if not fcm_resp["ok"]:
         log.warning("No FCM tokens for company_id=%s (skipping notification send)", company_id)
         return
         
@@ -51,9 +46,9 @@ def send_notification(rid, data: dict) -> None:
         }
 
         try:
-            res = service_request(NOTIFICATIONS_GATEWAY, "notifications", "/notifications/send", payload, rid)
+            res = service_request(NOTIFICATIONS_GATEWAY, "/notifications/send", payload)
             # Optional: if your service returns {"ok": false, ...}, log it
-            if isinstance(res, dict) and res.get("status") == "error":
+            if isinstance(res, dict) and res.get("ok") is False:
                 log.warning("Notification send failed company_id=%s token=%s res=%s", company_id, fcm_token[:12], res)
         except Exception:
             # Best-effort: keep going for other tokens

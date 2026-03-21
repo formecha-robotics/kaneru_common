@@ -22,7 +22,6 @@ from production.user_details.user_details import validate_username
 from production.user_details.user_details import retrieve_all
 from production.user_details.user_details import retrieve_preferences
 from production.user_details.user_details import update_preferences_db
-from production.user_details.user_address import retrieve_address
 from production.user_details.forbidden_usernames import forbidden_list
 from production.error_codes import *
 from production.user_details.user_gateway_internal import internals_bp
@@ -32,28 +31,6 @@ app = Flask(__name__)
 # Register blueprint
 app.register_blueprint(internals_bp)
 
-@app.route("/user_details/get_address", methods=["POST"])
-def get_address():
-
-    try:
-        data_dict = request.get_json(force=True)
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
-
-    customer_id = data_dict.get("customer_id")
-
-    try:
-        customer_address = retrieve_address(customer_id)
-        if customer_address is None:
-            return jsonify({'error': 'Bad data'}), 500 
-    except Exception as e:
-        return jsonify({'error': f'Invalid JSON: {e}'}), 500
-                
-    response = { "address" : customer_address }
- 
-    return jsonify(response), 200       
-
-
 @app.route("/user_details/update_preferences", methods=["POST"])
 def update_preferences():
 
@@ -62,7 +39,6 @@ def update_preferences():
     except Exception as e:
         return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
 
-    user_id = request.headers.get("X-User-Id")
     language_code = data_dict.get("language_code")
    
     print(language_code)
@@ -91,7 +67,6 @@ def retrive_user_preferences():
     except Exception as e:
         return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
 
-    user_id = request.headers.get("X-User-Id")
     preferences = retrieve_preferences(user_id)
 
     response = { "preferences" : preferences }
@@ -107,7 +82,6 @@ def retrive_user_details():
     except Exception as e:
         return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
 
-    user_id = request.headers.get("X-User-Id")
     user_details = retrieve_all(user_id)
 
     response = { "user_details" : user_details }
@@ -122,7 +96,6 @@ def update_user_verification_id():
     except Exception as e:
         return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
 
-    user_id = request.headers.get("X-User-Id")
     username = data_dict.get("username")
     is_email = data_dict.get("is_email")
     device_signals = data_dict.get("device_signals")
@@ -158,7 +131,6 @@ def confirm_user_verification_id():
     except Exception as e:
         return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
 
-    user_id = request.headers.get("X-User-Id")
     username = data_dict.get("username")
     pin_code = data_dict.get("pin_code")
     is_email = data_dict.get("is_email")
@@ -183,7 +155,6 @@ def update_username():
     except Exception as e:
         return jsonify({'error': f'Invalid JSON: {e}'}), INVALID_JSON
 
-    user_id = request.headers.get("X-User-Id")
     username = data_dict.get("username")
    
     print(username)

@@ -8,7 +8,6 @@ from production.book_utils import get_subcat_table
 ## get_pub_tags: gets tags for a pub => [JSON]
 ## update_ecomm_inv_cat: updates categories used at venue => int
 ## get_inventory_venue_map: gets map of inventory and venues => [JSON]
-## get_available_venues: gets available venues => [JSON]
 ## get_item_location: gets locations of inventory id => [JSON]
 ## get_checksums: gets list of checksums for inventory list => JSON
 ## create_cat_from_inv_embedding: creates a new category embedding from example inventory item
@@ -36,17 +35,16 @@ def get_pub_categories(venue_id, company_id):
 
     db_query = """
     SELECT s.category as category, c.subcategory as subcategory, m.pub_id as pub_id  
-    FROM ecomm_inv_cat c, book_inv_embedding_categories s, ecomm_pub_inv_map m, inv_location_stock v, inv_location_mapping l
+    FROM ecomm_inv_cat c, book_inv_embedding_categories s, ecomm_pub_inv_map m, inv_location_stock v
     WHERE c.embedding_subcat_id = s.embedding_subcat_id 
     AND m.inv_id = c.inv_id
     AND c.inv_cat_id = %s
     AND v.inv_id = c.inv_id
-    AND v.inv_location_id = l.inv_location_id
-    AND l.company_id = %s
+    AND v.company_id = %s
     AND m.venue_id = %s
     UNION
     SELECT c.subcategory as category, c.subcategory as subcategory, m.pub_id as pub_id  
-    FROM ecomm_inv_cat c, ecomm_pub_inv_map m, inv_location_stock v, inv_location_mapping l
+    FROM ecomm_inv_cat c, ecomm_pub_inv_map m, inv_location_stock v
     WHERE c.embedding_subcat_id NOT IN 
     (
        SELECT embedding_subcat_id FROM book_inv_embedding_categories
@@ -54,8 +52,7 @@ def get_pub_categories(venue_id, company_id):
     AND m.inv_id = c.inv_id
     AND c.inv_cat_id = %s
     AND v.inv_id = c.inv_id
-    AND v.inv_location_id = l.inv_location_id
-    AND l.company_id = %s
+    AND v.company_id = %s
     AND m.venue_id = %s
     ORDER BY category, subcategory ASC;
     """
@@ -68,29 +65,27 @@ def get_recommendation_embeddings(venue_id, company_id):
 
     db_query = """
                SELECT m.pub_id, e.embedding 
-               FROM book_inv_desc_embedding e, inventory i, ecomm_pub_inv_map m, inv_location_stock s, inv_location_mapping l, ecomm_venue_listings ev
+               FROM book_inv_desc_embedding e, inventory i, ecomm_pub_inv_map m, inv_location_stock s, ecomm_venue_listings ev
                WHERE i.inv_desc_id = e.desc_id 
                AND m.inv_id = i.inv_id
                AND s.inv_id = i.inv_id
-               AND s.inv_location_id = l.inv_location_id
                AND ev.venue_id = %s
                AND m.venue_id = ev.venue_id
-               AND l.company_id = %s
+               AND s.company_id = %s
                UNION
                SELECT m.pub_id, e.embedding
-               FROM inventory i, book_dsc_variant v, book_inv_desc_embedding e, ecomm_pub_inv_map m, inv_location_stock s, inv_location_mapping l, ecomm_venue_listings ev
+               FROM inventory i, book_dsc_variant v, book_inv_desc_embedding e, ecomm_pub_inv_map m, inv_location_stock s, ecomm_venue_listings ev
                WHERE i.inv_variant_id <> 0
                AND i.inv_desc_id = v.variant_dsc_id
                AND v.dsc_id = e.desc_id
                AND m.inv_id = i.inv_id
                AND s.inv_id = i.inv_id
-               AND s.inv_location_id = l.inv_location_id
                AND ev.venue_id = %s
                AND m.venue_id = ev.venue_id
-               AND l.company_id = %s
+               AND s.company_id = %s
                """
                
-    result = inventory_database.execute_query(db_query, (venue_id, company_id, venue_id, company_id))
+    result = inventory_database.execute_query(db_query, (venue_id, str(company_id), venue_id, str(company_id)))
     
     return result
 
@@ -209,13 +204,13 @@ def get_item_location(inv_id, company_id):
 
     db_query = """
                SELECT i.inv_id, i.quantity, m.*
-               FROM inv_location_stock i, inv_location_mapping m 
+               FROM inv_location_stock i, company_details_location_mapping m 
                WHERE i.inv_id = %s 
                AND m.company_id = %s
-               AND m.inv_location_id = i.inv_location_id;
+               AND i.loc_unique_id = m.loc_unique_id;
                """
 
-    params = (inv_id, company_id)
+    params = (inv_id, str(company_id))
     
     result = inventory_database.execute_query(db_query, params)
            
@@ -272,11 +267,10 @@ def get_all_inv_ids(company_id):
 
     db_query = """
         SELECT inv_id 
-        FROM inv_location_stock i, inv_location_mapping m
-        WHERE m.company_id = %s
-        AND i.inv_location_id = m.inv_location_id;
+        FROM inv_location_stock i
+        WHERE company_id = %s
         """
-    params = (company_id,)
+    params = (str(company_id),)
     
     inv_id_l = inventory_database.execute_query(db_query, params)
     
@@ -670,12 +664,12 @@ def get_location_from_qrcode(qrcode, company_id):
     
     db_query = f"""
     SELECT location, sublocation 
-    FROM inv_location_mapping 
+    FROM company_details_location_mapping 
     WHERE loc_unique_id = %s
     AND company_id = %s
     """
     
-    params = (qrcode, company_id)
+    params = (qrcode, str(company_id))
    
     location_info_l = inventory_database.execute_query(db_query, params)
 
@@ -687,13 +681,13 @@ def get_location_from_qrcode(qrcode, company_id):
 def get_location_qrcode(location, sublocation, company_id):
     db_query = f"""
     SELECT loc_unique_id 
-    FROM inv_location_mapping 
+    FROM company_details_location_mapping 
     WHERE location = %s
     AND sublocation = %s
     AND company_id = %s
     """
     
-    params = (location, sublocation, company_id)
+    params = (location, sublocation, str(company_id))
    
     qr_l = inventory_database.execute_query(db_query, params)
 
@@ -724,31 +718,33 @@ def map_description_to_inventory_id(desc_id):
 def get_location_inventory(location, sublocation, company_id):
     db_query = f"""
     SELECT s.inv_id, s.quantity, s.allocated, m.sublocation
-    FROM inv_location_stock s, inv_location_mapping m 
-    WHERE s.inv_location_id = m.inv_location_id
+    FROM inv_location_stock s, company_details_location_mapping m 
+    WHERE s.loc_unique_id = m.loc_unique_id
     AND m.location=%s
     AND m.sublocation = %s
     AND s.quantity > 0
+    AND m.company_id = s.company_id
     AND m.company_id =  %s 
     ORDER BY m.sublocation, s.inv_id asc;
     """
-    params = (location, sublocation, company_id)
+    params = (location, sublocation, str(company_id))
     
     stock_details_l = inventory_database.execute_query(db_query, params)
     
     return stock_details_l   
     
 def get_inventory_stock(inventory_id):
+    print("TODO should probably filter on company_id too, to avoid non-owner access")
     db_query = f"""
     SELECT i.inv_id, 
     (i.quantity - i.reserved - i.allocated) as available, 
     (s.quantity - s.reserved - s.allocated) as locally_available, 
     l.location, 
     l.sublocation 
-    FROM inventory i, inv_location_mapping l, inv_location_stock s 
+    FROM inventory i, company_details_location_mapping l, inv_location_stock s 
     WHERE s.inv_id = i.inv_id
     AND i.inv_cat_id = 1
-    AND l.inv_location_id = s.inv_location_id
+    AND l.loc_unique_id = s.loc_unique_id
     AND i.inv_id = {inventory_id};
     """
     stock_details_l = inventory_database.execute_query(db_query)

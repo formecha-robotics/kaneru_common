@@ -1,120 +1,64 @@
 import json
-from typing import Any, Callable, List, Dict, Optional, Union
+from typing import Any, Callable, List, Dict, Optional
 import requests
 from production.orders.services import service_request
 from production.orders.services import ECOMMERCE_GATEWAY
 from production.orders.services import INVENTORY_GATEWAY
-from production.orders.services import SHIPPING_GATEWAY
-import os
-from flask import Flask, request, jsonify, make_response, g
+
 from datetime import datetime
 import mysql.connector
-from mysql.connector import Error
-from production.credentials import db_credentials
-from production.credentials import redis_credentials
-import time
-from collections import OrderedDict
-from typing import Any, Dict, List
-import redis
 
-PENDING_ORDERS_TTL_SECONDS = 12 * 60 * 60  # 12 hours
-
-ORDER_RETAIN_TIME = 900 #seconds
 
 RFC_FORMAT = "%a, %d %b %Y %H:%M:%S GMT"
 
-app = Flask(__name__)
-
-
-def cancel_order_utils(conn, rid, venue_id, venue_order_id):
-    # 1) release in inventory service (must be idempotent on their side)
-    response = service_request(INVENTORY_GATEWAY, "inventory", "/inventory/cancel", {"venue_id" : venue_id, "venue_order_id" : venue_order_id}, rid)
-    if not response.get("ok"):
-        return False
-
-    cur = conn.cursor(dictionary=True)
-    try:
-        conn.start_transaction()
-
-        cur.execute(
-            "UPDATE order_commit SET status='REJECTED' WHERE venue_order_id = %s",
-            (venue_order_id,),
-        )
-        conn.commit()
-        return True
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-
-
-
-def commit_order(conn, request_id, customer_id, venue_id, venue_order_id, inv_order_reservation_id, ccy, item_total_cost, shipping_cost) -> int:
-    """
-    Creates an order_commit row and copies reservation lines into order_commit_lines atomically.
-    Returns number of commit lines inserted.
-    """
+def commit_order(conn, order_details):
+   
+   cur = conn.cursor(dictionary=True)   
+   
+   is_first = True
+   
+   for order in order_details:
+   
+       if is_first:
+           
+           is_first = False
+           request_id = order['request_id']
+           venue_id = order['venue_id']
+           venue_order_id = order['venue_order_id']
+           status = "COMMITTED"
+   
+           cur.execute(
+                """
+                INSERT INTO order_commit (venue_id, venue_order_id, request_id, status)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (venue_id, venue_order_id, request_id, status)
+           )
     
-    started_here = not getattr(conn, "in_transaction", False)
+           order_commit_id = order_commit_id = cur.lastrowid
+       
+       company_id = order['company_id']
+       inv_id = order['inv_id']              
+       inv_location_id = order['inv_location_id']  
+       qty_committed = order['reserved']
+
+       cur.execute(
+            """             
+            INSERT INTO order_commit_lines (order_commit_id, inv_id, inv_location_id, qty_committed, company_id)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (order_commit_id, inv_id, inv_location_id, qty_committed, company_id)
+       )
+           
+       numrow = cur.rowcount
+             
+   conn.commit()
+   cur.close()
+
+def allocate_orders(request_id, venue_id, venue_order_id):
+
+    response = service_request(INVENTORY_GATEWAY, "/inventory/commit", {"request_id": request_id, "venue_id": venue_id, "venue_order_id" : venue_order_id})
     
-    cur = conn.cursor(dictionary=True)
-    try:
-        if started_here:
-            conn.start_transaction()
-
-        cur.execute(
-            """
-            INSERT INTO order_commit (venue_id, venue_order_id, request_id, user_id, ccy, item_total_cost, shipping_cost, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (venue_id, venue_order_id, request_id, customer_id, ccy, item_total_cost, shipping_cost, "COMMITTED"),
-        )
-        order_commit_id = cur.lastrowid
-
-        cur.execute(
-            """
-            INSERT INTO order_commit_lines (
-                order_commit_id, inv_id, inv_location_id, qty_committed, company_id, ccy, item_cost
-            )
-            SELECT
-                %s, inv_id, inv_location_id, reserved, company_id, ccy, item_cost
-            FROM order_reservation_lines
-            WHERE inv_order_reservation_id = %s
-            """,
-            (order_commit_id, inv_order_reservation_id),
-        )
-        #num_rows = cur.rowcount
-
-        cur.execute(
-            """
-            SELECT DISTINCT company_id
-            FROM order_reservation_lines
-            WHERE inv_order_reservation_id = %s
-            """,
-            (inv_order_reservation_id,)
-        )
-
-        company_list = cur.fetchall()
-        #print(f"company list: {company_list}")
-
-        if started_here:
-            conn.commit()
-            
-        return company_list
-
-    except Exception:
-        if started_here:
-            conn.rollback()
-        raise
-    finally:
-        cur.close()
-
-
-def allocate_orders(rid, request_id, venue_id, venue_order_id):
-
-    response = service_request(INVENTORY_GATEWAY, "inventory", "/inventory/commit", {"request_id": request_id, "venue_id": venue_id, "venue_order_id" : venue_order_id}, rid)
-        
     if not response["ok"]:
         return False
     
@@ -138,49 +82,28 @@ def check_reserved_orders(conn, request_id):
 
     return results
 
-def release_reservation(conn, rid, request_id):
-    # 1) release in inventory service (must be idempotent on their side)
-    response = service_request(INVENTORY_GATEWAY, "inventory", "/inventory/release", {"request_id": request_id}, rid)
-    if not response.get("ok"):
+def release_reservation(conn, request_id):
+
+    response = service_request(INVENTORY_GATEWAY, "/inventory/release", {"request_id": request_id})
+    
+    if not response["ok"]:
         return False
+       
+    cur = conn.cursor()   
+       
+    cur.execute(
+        """
+        DELETE FROM order_reservations
+        WHERE request_id = %s
+        """,
+        (request_id,),
+    )
+    
+    deleted = cur.rowcount       
 
-    cur = conn.cursor(dictionary=True)
-    try:
-        conn.start_transaction()
+    cur.close()
 
-        cur.execute(
-            """
-            SELECT inv_order_reservation_id
-            FROM order_reservations
-            WHERE request_id = %s
-            FOR UPDATE
-            """,
-            (request_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            conn.rollback()
-            return False  # or True if you want "already released" semantics
-
-        rid = row["inv_order_reservation_id"]
-
-        cur.execute(
-            "DELETE FROM order_reservation_lines WHERE inv_order_reservation_id = %s",
-            (rid,),
-        )
-        cur.execute(
-            "DELETE FROM order_reservations WHERE inv_order_reservation_id = %s",
-            (rid,),
-        )
-
-        conn.commit()
-        return True
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-
+    return True
 
 def parse_rfc_datetime(dt_str: str) -> str:
     """
@@ -190,140 +113,87 @@ def parse_rfc_datetime(dt_str: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def insert_order_reservations(
-    conn,
-    res: List[Dict[str, Any]],
-    user_id: str,
-    header_ccy: str,
-    item_total_cost: float,
-    shipping_cost: float,
-    lines: List[Dict[str, Any]],
-) -> int:
+def insert_order_reservations(conn, reservations: List[Dict[str, Any]]) -> int:
     """
-    Inserts 1 row into order_reservations + N rows into order_reservation_lines atomically.
-    Returns total inserted rows (1 + N).
+    Insert a list of reservation dicts into order_reservations table.
+    Returns number of inserted rows.
     """
 
-    if not res or not header_ccy or not lines:
+    if not reservations:
         return 0
 
-    # Header fields taken from res[0]
-    inv_order_reservation_id = res[0]["inv_order_reservation_id"]
-    reservation_time = parse_rfc_datetime(res[0]["reservation_time"])
-    expires_at = parse_rfc_datetime(res[0]["expires_at"])
-
-    sql_header = """
+    sql = """
         INSERT INTO order_reservations (
             inv_order_reservation_id,
             request_id,
-            user_id,
             venue_id,
+            company_id,
             venue_order_id,
             ttl_seconds,
             reservation_time,
-            expires_at,
-            ccy,
-            item_total_cost,
-            shipping_cost
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """
-
-    sql_lines = """
-        INSERT INTO order_reservation_lines (
-            inv_order_reservation_id,
             inv_id,
             inv_location_id,
             reserved,
-            company_id,
-            ccy,
-            item_cost
+            expires_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (
+            %(inv_order_reservation_id)s,
+            %(request_id)s,
+            %(venue_id)s,
+            %(company_id)s,
+            %(venue_order_id)s,
+            %(ttl_seconds)s,
+            %(reservation_time)s,
+            %(inv_id)s,
+            %(inv_location_id)s,
+            %(reserved)s,
+            %(expires_at)s
+        )
     """
 
-    # Build lookup maps from the "lines" payload
-    inv_to_ccy = {l["inv_id"]: l["ccy"] for l in lines}
-    inv_to_cost = {l["inv_id"]: l["item_price"] for l in lines}  # you called it item_price in input
-
     cursor = conn.cursor()
-    try:
-        conn.start_transaction()
 
-        header_row = (
-            inv_order_reservation_id,
-            res[0]["request_id"],
-            user_id,
-            res[0]["venue_id"],
-            res[0]["venue_order_id"],
-            res[0]["ttl_seconds"],
-            reservation_time,
-            expires_at,
-            header_ccy,
-            item_total_cost,
-            shipping_cost,
-        )
-        cursor.execute(sql_header, header_row)
-        inserted_header = cursor.rowcount  # should be 1
+    prepared_rows = []
 
-        prepared_rows = []
-        for r in res:
-            inv_id = r["inv_id"]
+    for r in reservations:
+        row = r.copy()
 
-            line_ccy = inv_to_ccy.get(inv_id)
-            item_cost = inv_to_cost.get(inv_id)
-            if line_ccy is None or item_cost is None:
-                raise KeyError(f"Missing pricing/ccy for inv_id={inv_id} in lines[]")
+        # Convert RFC datetime strings to MySQL format
+        row["reservation_time"] = parse_rfc_datetime(r["reservation_time"])
+        row["expires_at"] = parse_rfc_datetime(r["expires_at"])
 
-            prepared_rows.append(
-                (
-                    inv_order_reservation_id,
-                    inv_id,
-                    r["inv_location_id"],
-                    r["reserved"],
-                    r["company_id"],
-                    line_ccy,
-                    item_cost,
-                )
-            )
+        prepared_rows.append(row)
 
-        cursor.executemany(sql_lines, prepared_rows)
-        inserted_lines = cursor.rowcount  # mysql-connector returns total rows inserted for executemany
+    cursor.executemany(sql, prepared_rows)
+    conn.commit()
 
-        conn.commit()
-        return inserted_header + inserted_lines
+    inserted = cursor.rowcount
+    cursor.close()
 
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cursor.close()
+    return inserted
 
 
 
-
-def map_order_lines_to_inventory(rid, order_details: dict) -> list:
+def map_order_lines_to_inventory(order_details: dict) -> list:
     lines = order_details.get("lines", [])
     pub_qty = {}
-    pub_item_price = {}
-    pub_item_ccy = {}
 
     for line in lines:
         sku = line["sku"]          # "PUB-2617"
         qty = int(line["qty"])
         pub_id = int(sku.split("-", 1)[1])
         pub_qty[pub_id] = pub_qty.get(pub_id, 0) + qty
-        pub_item_price[pub_id] = float(line["item_price"])
-        pub_item_ccy[pub_id] = line["ccy"]
 
     pub_ids = list(pub_qty.keys())
 
-    response = service_request(ECOMMERCE_GATEWAY, "ecommerce", "ecommerce/pub_details", {"pub_ids": pub_ids}, rid)
+    response = service_request(ECOMMERCE_GATEWAY, "ecommerce/pub_details", {"pub_ids": pub_ids})
     
     if not response["ok"]:
         raise ValueError(response['error'])
         
     data = response["data"]
+
+    print(data)
 
     # Normalize response to dict: {pub_id(int): inv_id(str)}
     pub_to_inv = {}
@@ -342,15 +212,15 @@ def map_order_lines_to_inventory(rid, order_details: dict) -> list:
     for pub_id, qty in pub_qty.items():
         inv_id = pub_to_inv.get(pub_id)
         company_id = pub_to_company.get(pub_id)
-        ccy = pub_item_ccy.get(pub_id)
-        item_price = pub_item_price.get(pub_id)
-        result.append({"pub_id": pub_id, "inv_id": inv_id, "company_id" : company_id, "qty": qty, "ccy" : ccy, "item_price" : item_price})
+        result.append({"pub_id": pub_id, "inv_id": inv_id, "company_id" : company_id, "qty": qty})
 
     print("##########################")
     print(result)
 
     return result
 
+<<<<<<< Updated upstream
+=======
 
 def _redis_key(company_id: int, inv_id: int) -> str:
     return f"order_inv_data_{company_id}_{inv_id}"
@@ -561,3 +431,4 @@ def pending_order_count_db(conn, company_id):
    
 
 
+>>>>>>> Stashed changes
